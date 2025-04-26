@@ -220,68 +220,115 @@ elif page == "Add Trial":
 elif page == "Search Trials":
     st.header("Search Clinical Trials")
     
-    col1, col2 = st.columns(2)
+    search_type = st.radio("Search Type", ["Standard Search", "Semantic Search"])
     
-    with col1:
-        phase = st.selectbox("Phase", ["", "1", "2", "3", "4"])
-        status = st.selectbox("Status", ["", "planned", "recruiting", "active", "completed", "terminated"])
-    
-    with col2:
-        sponsor = st.text_input("Sponsor (contains)")
-        drug_name = st.text_input("Drug Name (contains)")
-    
-    date_col1, date_col2 = st.columns(2)
-    with date_col1:
-        start_date_from = st.date_input("Start Date From", value=None)
-    with date_col2:
-        start_date_to = st.date_input("Start Date To", value=None)
-    
-    if st.button("Search"):
-        # Build query parameters
-        params = {}
-        if phase:
-            params["phase"] = phase
-        if status:
-            params["status"] = status
-        if sponsor:
-            params["sponsor"] = sponsor
-        if drug_name:
-            params["drug_name"] = drug_name
-        if start_date_from:
-            params["start_date_from"] = start_date_from.isoformat() + "T00:00:00"
-        if start_date_to:
-            params["start_date_to"] = start_date_to.isoformat() + "T00:00:00"
+    if search_type == "Standard Search":
+        # Your existing standard search code
+        col1, col2 = st.columns(2)
         
-        # Execute search
-        with st.spinner("Searching..."):
-            try:
-                response = requests.get(f"{API_URL}/search", params=params)
-                if response.status_code == 200:
-                    trials = response.json()
-                    
-                    if not trials:
-                        st.info("No trials match your search criteria.")
+        with col1:
+            phase = st.selectbox("Phase", ["", "1", "2", "3", "4"])
+            status = st.selectbox("Status", ["", "planned", "recruiting", "active", "completed", "terminated"])
+        
+        with col2:
+            sponsor = st.text_input("Sponsor (contains)")
+            drug_name = st.text_input("Drug Name (contains)")
+        
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            start_date_from = st.date_input("Start Date From", value=None)
+        with date_col2:
+            start_date_to = st.date_input("Start Date To", value=None)
+        
+        if st.button("Search"):
+            # Build query parameters
+            params = {}
+            if phase:
+                params["phase"] = phase
+            if status:
+                params["status"] = status
+            if sponsor:
+                params["sponsor"] = sponsor
+            if drug_name:
+                params["drug_name"] = drug_name
+            if start_date_from:
+                params["start_date_from"] = start_date_from.isoformat() + "T00:00:00"
+            if start_date_to:
+                params["start_date_to"] = start_date_to.isoformat() + "T00:00:00"
+            
+            # Execute search
+            with st.spinner("Searching..."):
+                try:
+                    response = requests.get(f"{API_URL}/search", params=params)
+                    if response.status_code == 200:
+                        trials = response.json()
+                        
+                        if not trials:
+                            st.info("No trials match your search criteria.")
+                        else:
+                            st.success(f"Found {len(trials)} trials matching your criteria.")
+                            
+                            # Display results
+                            df = pd.DataFrame([{
+                                "ID": t["id"],
+                                "Title": t["title"],
+                                "Phase": t["phase"],
+                                "Status": t["status"],
+                                "Start Date": format_date(t["start_date"]),
+                                "End Date": format_date(t["end_date"]) if t.get("end_date") else "Not set",
+                                "Sponsor": t["sponsor"]
+                            } for t in trials])
+                            
+                            st.dataframe(df)
                     else:
-                        st.success(f"Found {len(trials)} trials matching your criteria.")
+                        st.error(f"Search failed: {response.text}")
+                except requests.exceptions.ConnectionError:
+                    st.error("Could not connect to the API. Make sure the FastAPI server is running.")
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
+    
+    else:  # Semantic Search
+        st.subheader("Semantic Search")
+        st.markdown("""
+        Semantic search finds trials by understanding the meaning of your query, 
+        not just matching keywords. Try describing what you're looking for.
+        """)
+        
+        query = st.text_input("What are you looking for?", 
+                             placeholder="E.g., 'Weight loss trials for diabetic patients'")
+        top_k = st.slider("Number of results", min_value=1, max_value=20, value=5)
+        
+        if st.button("Search Semantically"):
+            with st.spinner("Searching..."):
+                try:
+                    response = requests.get(
+                        f"{API_URL}/semantic-search",
+                        params={"query": query, "top_k": top_k}
+                    )
+                    
+                    if response.status_code == 200:
+                        trials = response.json()
                         
-                        # Display results
-                        df = pd.DataFrame([{
-                            "ID": t["id"],
-                            "Title": t["title"],
-                            "Phase": t["phase"],
-                            "Status": t["status"],
-                            "Start Date": format_date(t["start_date"]),
-                            "End Date": format_date(t["end_date"]) if t.get("end_date") else "Not set",
-                            "Sponsor": t["sponsor"]
-                        } for t in trials])
-                        
-                        st.dataframe(df)
-                else:
-                    st.error(f"Search failed: {response.text}")
-            except requests.exceptions.ConnectionError:
-                st.error("Could not connect to the API. Make sure the FastAPI server is running.")
-            except Exception as e:
-                st.error(f"An error occurred: {str(e)}")
+                        if not trials:
+                            st.info("No semantically similar trials found.")
+                        else:
+                            st.success(f"Found {len(trials)} semantically similar trials.")
+                            
+                            # Display results with similarity scores
+                            for trial in trials:
+                                similarity = trial.get('similarity_score', 0)
+                                with st.expander(f"{trial['title']} (Similarity: {similarity:.2f})"):
+                                    st.markdown(f"**Phase:** {trial['phase']}")
+                                    st.markdown(f"**Status:** {trial['status']}")
+                                    st.markdown(f"**Description:** {trial['description']}")
+                                    st.markdown(f"**Primary Outcome:** {trial['primary_outcome']}")
+                                    st.markdown(f"**Sponsor:** {trial['sponsor']}")
+                    else:
+                        st.error(f"Search failed: {response.text}")
+                except requests.exceptions.ConnectionError:
+                    st.error("Could not connect to the API. Make sure the FastAPI server is running.")
+                except Exception as e:
+                    st.error(f"An error occurred: {str(e)}")
 
 # Manage Relationships Page
 elif page == "Manage Relationships":
@@ -423,4 +470,16 @@ with st.sidebar:
             st.error("API is not responding correctly ❌")
     except:
         st.error("Cannot connect to API ❌")
-        st.markdown("Make sure the FastAPI server is running on http://localhost:8000") 
+        st.markdown("Make sure the FastAPI server is running on http://localhost:8000")
+
+# Add this in your sidebar or wherever appropriate
+if st.button("Refresh Vector Search Index"):
+    with st.spinner("Refreshing search index..."):
+        try:
+            response = requests.post(f"{API_URL}/refresh-vector-store")
+            if response.status_code == 200:
+                st.success("Search index refreshed!")
+            else:
+                st.error(f"Failed to refresh index: {response.text}")
+        except Exception as e:
+            st.error(f"Error: {str(e)}") 

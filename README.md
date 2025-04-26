@@ -13,6 +13,7 @@ This application provides a robust platform for managing clinical trial data wit
 - **Graph Database**: Neo4j
 - **Frontend**: Streamlit
 - **Language**: Python 3.8+
+- **Vector Search**: Sentence Transformers + FAISS
 
 ## Features
 
@@ -21,6 +22,7 @@ This application provides a robust platform for managing clinical trial data wit
 - Advanced search with multiple filtering options
 - User-friendly web interface
 - Hybrid database architecture (document + graph)
+- Semantic search using vector embeddings (FAISS)
 
 ## Installation
 
@@ -70,6 +72,8 @@ This application provides a robust platform for managing clinical trial data wit
 
    ```
    streamlit run app.py
+   or
+   python -m streamlit run app.py
    ```
 
 3. Open your browser and navigate to:
@@ -111,6 +115,16 @@ The system uses the following core models:
 - **DrugCompound**: Contains information about pharmaceutical compounds
 - **Relationship**: Defines connections between entities in the graph database
 
+### Vector Search
+
+The system implements semantic search functionality using:
+
+- **Sentence Transformers**: Converts text descriptions into vector embeddings
+- **FAISS**: Facebook AI Similarity Search for efficient vector similarity search
+- **Vector Store**: Custom implementation that indexes trial data for semantic retrieval
+
+This allows users to search for trials by describing what they're looking for in natural language, rather than using exact keyword matches.
+
 ### Database Architecture
 
 This project implements a hybrid database approach:
@@ -128,6 +142,7 @@ The Streamlit frontend provides:
 2. **Add Trial**: Create new clinical trials with a comprehensive form
 3. **Search Trials**: Find trials using multiple filters
 4. **Manage Relationships**: Create and manage relationships between entities
+5. **Semantic Search**: Find trials using natural language understanding rather than exact keyword matching
 
 ## Contributing
 

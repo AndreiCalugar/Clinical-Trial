@@ -8,6 +8,7 @@ from datetime import datetime
 from enum import Enum
 import os
 from dotenv import load_dotenv
+from vector_store import TrialVectorStore
 
 # Load environment variables
 load_dotenv()
@@ -18,6 +19,37 @@ app = FastAPI(
     description="API for managing clinical trial metadata with MongoDB and Neo4j",
     version="1.0.0"
 )
+
+# Add this after your other initializations, before the API routes
+# Initialize vector store
+vector_store = None
+
+@app.on_event("startup")
+async def initialize_vector_store():
+    global vector_store
+    vector_store = TrialVectorStore()
+    
+    try:
+        # First try to load existing index
+        vector_store.load()
+        print("Loaded existing vector store")
+    except Exception as e:
+        print(f"Creating new vector store: {str(e)}")
+        vector_store.create_index()
+        
+        # Add existing trials from MongoDB
+        try:
+            db = get_db()
+            trials = list(db.trials.find({}))
+            if trials:
+                # Convert ObjectId to string
+                for trial in trials:
+                    trial["_id"] = str(trial["_id"])
+                vector_store.add_trials(trials)
+                vector_store.save()
+                print(f"Added {len(trials)} trials to vector store")
+        except Exception as e:
+            print(f"Error loading trials into vector store: {str(e)}")
 
 # ---- Pydantic Models ----
 
@@ -129,6 +161,7 @@ def health_check():
 
 @app.post("/trials", status_code=status.HTTP_201_CREATED, response_model=ClinicalTrial)
 def create_trial(trial: ClinicalTrial, db=Depends(get_db)):
+    # Convert to dict for MongoDB
     trial_dict = trial.model_dump()
     
     # Convert datetime to string for MongoDB
@@ -142,6 +175,11 @@ def create_trial(trial: ClinicalTrial, db=Depends(get_db)):
     
     if not result.acknowledged:
         raise HTTPException(status_code=500, detail="Failed to create trial")
+    
+    # Add to vector store
+    global vector_store
+    vector_store.add_trials([trial_dict])
+    vector_store.save()
     
     return trial
 
@@ -395,6 +433,83 @@ def search_trials(
             trial["updated_at"] = datetime.fromisoformat(trial["updated_at"])
         
         return trials
+
+# Add a new endpoint for semantic search
+@app.get("/semantic-search")
+def semantic_search(query: str, top_k: int = 5, db=Depends(get_db)):
+    global vector_store
+    
+    # Check if vector store is initialized
+    if vector_store is None or vector_store.index is None:
+        # Try to initialize it
+        try:
+            vector_store = TrialVectorStore()
+            vector_store.create_index()
+            
+            # Add existing trials
+            trials = list(db.trials.find({}))
+            for trial in trials:
+                trial["_id"] = str(trial["_id"])
+            vector_store.add_trials(trials)
+            vector_store.save()
+        except Exception as e:
+            raise HTTPException(status_code=500, 
+                               detail=f"Failed to initialize vector store: {str(e)}")
+    
+    try:
+        # Search vector store
+        results = vector_store.search(query, top_k)
+        
+        # Get full trial data
+        trial_ids = [r["trial_id"] for r in results]
+        trials = []
+        
+        for trial_id in trial_ids:
+            trial = db.trials.find_one({"id": trial_id})
+            if trial:
+                trial["_id"] = str(trial["_id"])
+                trial["similarity_score"] = next(r["similarity_score"] for r in results if r["trial_id"] == trial_id)
+                
+                # Convert dates back to string
+                if isinstance(trial.get("start_date"), datetime):
+                    trial["start_date"] = trial["start_date"].isoformat()
+                if isinstance(trial.get("end_date"), datetime):
+                    trial["end_date"] = trial["end_date"].isoformat()
+                if isinstance(trial.get("created_at"), datetime):
+                    trial["created_at"] = trial["created_at"].isoformat()
+                if isinstance(trial.get("updated_at"), datetime):
+                    trial["updated_at"] = trial["updated_at"].isoformat()
+                    
+                trials.append(trial)
+        
+        return trials
+    except Exception as e:
+        raise HTTPException(status_code=500, 
+                           detail=f"Semantic search failed: {str(e)}")
+
+# Add this endpoint to force a vector store refresh
+@app.post("/refresh-vector-store")
+def refresh_vector_store(db=Depends(get_db)):
+    global vector_store
+    
+    try:
+        # Create new vector store
+        vector_store = TrialVectorStore()
+        vector_store.create_index()
+        
+        # Add all trials
+        trials = list(db.trials.find({}))
+        for trial in trials:
+            trial["_id"] = str(trial["_id"])
+        
+        if trials:
+            vector_store.add_trials(trials)
+            vector_store.save()
+            return {"status": "success", "message": f"Refreshed vector store with {len(trials)} trials"}
+        else:
+            return {"status": "warning", "message": "No trials found to index"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh vector store: {str(e)}")
 
 # Main entry point
 if __name__ == "__main__":
